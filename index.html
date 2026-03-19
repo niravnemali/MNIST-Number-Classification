@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MNIST Drawing App</title>
+    <!-- 1. Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 2. Load the ONNX Runtime Web library -->
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <style>
+        /* Custom styles for the drawing canvas and brush */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        
+        #canvas {
+            touch-action: none;
+            /* CRITICAL: Scale the 28x28 canvas up to 280x280 for visibility */
+            width: 280px;
+            height: 280px;
+            /* This ensures the drawing looks sharp and pixelated */
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+        }
+
+        .bar-container {
+            width: 100%;
+            height: 20px;
+            background-color: #e0e0e0;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .bar-fill {
+            height: 100%;
+            background-color: #3b82f6; /* blue-500 */
+            border-radius: 8px;
+            transition: width 0.3s ease-in-out;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+
+    <div class="w-full max-w-4xl mx-auto p-4">
+        <div class="bg-white shadow-xl rounded-2xl p-6 md:p-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-center text-gray-800 mb-6">
+                MNIST Number Predictor
+            </h1>
+            
+            <div class="flex flex-col md:flex-row gap-6 md:gap-8">
+
+                <!-- Left Column: Drawing Area -->
+                <div class="w-full md:w-1/2 flex flex-col items-center">
+                    <h2 class="text-xl font-semibold text-gray-700 mb-3">Draw a digit (0-9)</h2>
+                    
+                    <!-- NEW: The canvas is now 28x28 internally, but styled to be 280x280 -->
+                    <canvas id="canvas" width="28" height="28"
+                        class="bg-black rounded-lg shadow-inner cursor-crosshair"></canvas>
+                    
+                    <button id="clearBtn"
+                        class="w-full mt-4 bg-red-500 text-white font-semibold py-3 rounded-lg shadow-md hover:bg-red-600 transition-all focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-opacity-75">
+                        Clear Drawing
+                    </button>
+                </div>
+
+                <!-- Right Column: Prediction -->
+                <div class="w-full md:w-1/2">
+                    <h2 class="text-xl font-semibold text-gray-700 mb-3">Prediction</h2>
+                    
+                    <div id="statusBox" class="p-3 mb-4 rounded-lg text-center font-medium bg-blue-100 text-blue-700">
+                        Model loading...
+                    </div>
+
+                    <!-- Prediction Results Area -->
+                    <div id="results" class="space-y-3 hidden">
+                        <h3 class="text-2xl font-bold text-center text-blue-600" id="predictionText">
+                            Prediction: 9
+                        </h3>
+                        <div class="space-y-2 pt-2">
+                            <!-- Dynamically generated probability bars will go here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // === ONNX Runtime Session ===
+        let ortSession;
+
+        // === Canvas Setup ===
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const clearBtn = document.getElementById('clearBtn');
+        const statusBox = document.getElementById('statusBox');
+        const resultsDiv = document.getElementById('results');
+        const predictionText = document.getElementById('predictionText');
+        
+        let isDrawing = false;
+        
+        // This is the (visual) pixel size of the canvas element (280px)
+        const CANVAS_DISPLAY_SIZE = 280; // Hardcode for stability
+        // This is the (internal) resolution of the canvas (28px)
+        const CANVAS_RESOLUTION = canvas.width;
+        // Calculate the ratio
+        const PIXEL_RATIO = CANVAS_DISPLAY_SIZE / CANVAS_RESOLUTION; // 280 / 28 = 10
+
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, CANVAS_RESOLUTION, CANVAS_RESOLUTION);
+
+        // === Drawing Logic ===
+        function getPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            // Handle both touch and mouse events
+            const clientX = e.clientX || e.touches[0].clientX;
+            const clientY = e.clientY || e.touches[0].clientY;
+            
+            // NEW: Scale the visual coordinates (0-280) down to the
+            // internal canvas resolution (0-28)
+            return {
+                x: (clientX - rect.left) / PIXEL_RATIO,
+                y: (clientY - rect.top) / PIXEL_RATIO
+            };
+        }
+
+        function startDrawing(e) {
+            isDrawing = true;
+            draw(e);
+        }
+
+        function stopDrawing() {
+            if (isDrawing) {
+                isDrawing = false;
+                ctx.beginPath(); // End the current path
+                runPrediction(); // Run prediction when drawing stops
+            }
+        }
+
+        function draw(e) {
+            if (!isDrawing) return;
+            e.preventDefault();
+
+            const { x, y } = getPos(e);
+
+            // NEW: Brush size is now for the 28x28 canvas
+            // A line width of 2.5 gives a thicker line and anti-aliasing
+            ctx.lineWidth = 2.5; 
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = 'white';
+
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+        }
+
+        // === Event Listeners ===
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseout', stopDrawing);
+        canvas.addEventListener('mousemove', draw);
+        
+        canvas.addEventListener('touchstart', startDrawing);
+        canvas.addEventListener('touchend', stopDrawing);
+        canvas.addEventListener('touchcancel', stopDrawing);
+        canvas.addEventListener('touchmove', draw);
+
+        clearBtn.addEventListener('click', () => {
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, CANVAS_RESOLUTION, CANVAS_RESOLUTION);
+            resultsDiv.classList.add('hidden');
+            statusBox.classList.remove('hidden');
+            statusBox.textContent = 'Model loaded. Draw a digit.';
+            statusBox.className = "p-3 mb-4 rounded-lg text-center font-medium bg-green-100 text-green-700";
+        });
+
+        // === Pre-processing and Prediction Logic ===
+
+        /**
+         * Gets the image data, finds the bounding box, and centers the digit
+         * before flattening it into a 784-element Float32Array.
+         * * NEW: This function now centers the digit to match MNIST data.
+         */
+        function getImageData() {
+            const imageData = ctx.getImageData(0, 0, CANVAS_RESOLUTION, CANVAS_RESOLUTION);
+            const data = imageData.data;
+
+            // 1. Find Bounding Box of the drawing
+            let minX = CANVAS_RESOLUTION, minY = CANVAS_RESOLUTION, maxX = -1, maxY = -1;
+            for (let y = 0; y < CANVAS_RESOLUTION; y++) {
+                for (let x = 0; x < CANVAS_RESOLUTION; x++) {
+                    const i = (y * CANVAS_RESOLUTION + x) * 4;
+                    // Check alpha channel, but red channel (data[i]) works too
+                    if (data[i] > 0) { 
+                        if (x < minX) minX = x;
+                        if (x > maxX) maxX = x;
+                        if (y < minY) minY = y;
+                        if (y > maxY) maxY = y;
+                    }
+                }
+            }
+
+            // Handle empty canvas
+            if (minX === CANVAS_RESOLUTION) {
+                return new Float32Array(784); // Return all zeros
+            }
+
+            // 2. Calculate cropped dimensions
+            const cropWidth = maxX - minX + 1;
+            const cropHeight = maxY - minY + 1;
+
+            // 3. Create a new in-memory canvas and center the cropped image
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = CANVAS_RESOLUTION;
+            tempCanvas.height = CANVAS_RESOLUTION;
+            const tempCtx = tempCanvas.getContext('2d');
+
+            // 4. Scale the cropped image to fit a 20x20 box (like MNIST)
+            // and center it within the 28x28 temp canvas.
+            const targetSize = 20; // MNIST digits are roughly 20x20
+            const scale = Math.min(targetSize / cropWidth, targetSize / cropHeight);
+            const newWidth = cropWidth * scale;
+            const newHeight = cropHeight * scale;
+            // Calculate new X,Y to center the 20x20 box
+            const newX = (CANVAS_RESOLUTION - newWidth) / 2;
+            const newY = (CANVAS_RESOLUTION - newHeight) / 2;
+
+            // 5. Draw the *cropped* image from the *original* canvas
+            // onto the *temp* canvas at the new *centered* position
+            tempCtx.drawImage(canvas, 
+                minX, minY, cropWidth, cropHeight,   // Source rect
+                newX, newY, newWidth, newHeight);    // Destination rect
+
+            // 6. Get the pixel data from the *centered* image
+            const centeredImageData = tempCtx.getImageData(0, 0, CANVAS_RESOLUTION, CANVAS_RESOLUTION);
+            
+            // 7. Convert to a flat Float32Array
+            const inputData = new Float32Array(784);
+            for (let i = 0; i < 784; i++) {
+                // Use Red channel, normalize to [0, 1]
+                inputData[i] = centeredImageData.data[i * 4] / 255.0; 
+            }
+            
+            return inputData;
+        }
+
+
+        /**
+         * Runs the prediction logic
+         */
+        async function runPrediction() {
+            if (!ortSession) return; // Don't run if model isn't loaded
+
+            try {
+                // 1. Get and preprocess canvas data
+                const inputData = getImageData();
+                
+                // 2. Create the ONNX Tensor
+                // Your model expects shape [batch_size, 784]
+                const inputTensor = new ort.Tensor('float32', inputData, [1, 784]);
+
+                // 3. Run inference
+                // The input name 'input' MUST match the name from your export step
+                const feeds = { 'input': inputTensor }; 
+                const results = await ortSession.run(feeds);
+
+                // 4. Get the output tensor
+                // The output name 'output' MUST match the name from your export step
+                const outputData = results.output.data;
+                
+                // 5. Post-process the output
+                // Your PyTorch model already applied Softmax, so these are probabilities
+                const probabilities = Array.from(outputData);
+                updateResults(probabilities);
+
+            } catch (e) {
+                console.error(e);
+                statusBox.classList.remove('hidden');
+                statusBox.textContent = 'Prediction failed. Check console.';
+                statusBox.className = "p-3 mb-4 rounded-lg text-center font-medium bg-red-100 text-red-700";
+            }
+        }
+        
+        /**
+         * Finds the max value and index from an array
+         */
+        function getPrediction(scores) {
+            let maxScore = -Infinity;
+            let maxIndex = -1;
+            for(let i = 0; i < scores.length; i++) {
+                if (scores[i] > maxScore) {
+                    maxScore = scores[i];
+                    maxIndex = i;
+                }
+            }
+            return [maxIndex, maxScore];
+        }
+
+        /**
+         * Updates the UI with prediction bars
+         */
+        function updateResults(scores) {
+            const [prediction, confidence] = getPrediction(scores);
+            
+            predictionText.textContent = `Prediction: ${prediction}`;
+            
+            // Clear old bars
+            const resultsContainer = resultsDiv.querySelector('.space-y-2');
+            resultsContainer.innerHTML = '';
+            
+            // Add new bars
+            scores.forEach((score, index) => {
+                const bar = document.createElement('div');
+                bar.className = 'flex items-center gap-2';
+                
+                const label = document.createElement('div');
+                label.className = 'font-semibold text-gray-700 w-4';
+                label.textContent = index;
+                
+                const barContainer = document.createElement('div');
+                barContainer.className = 'bar-container';
+                
+                const barFill = document.createElement('div');
+                barFill.className = 'bar-fill';
+                barFill.style.width = `${score * 100}%`;
+                
+                if (index === prediction) {
+                    barFill.classList.add('bg-blue-600');
+                    label.classList.add('text-blue-600');
+                } else {
+                    barFill.classList.add('bg-blue-300');
+                }
+                
+                barContainer.appendChild(barFill);
+                bar.appendChild(label);
+                bar.appendChild(barContainer);
+                resultsContainer.appendChild(bar);
+            });
+
+            statusBox.classList.add('hidden');
+            resultsDiv.classList.remove('hidden');
+        }
+
+        // === Load the Model ===
+        async function loadModel() {
+            try {
+                // This will load your 'my_mnist_model.onnx' file
+                ortSession = await ort.InferenceSession.create('./my_mnist_model.onnx');
+                
+                statusBox.textContent = 'Model loaded. Draw a digit.';
+                statusBox.className = "p-3 mb-4 rounded-lg text-center font-medium bg-green-100 text-green-700";
+                
+                // Run a dummy prediction to "warm up" the model (optional)
+                const dummyInput = new ort.Tensor('float32', new Float32Array(784), [1, 784]);
+                await ortSession.run({ 'input': dummyInput });
+                console.log("Model loaded and warmed up.");
+
+            } catch (e) {
+                console.error(e);
+                statusBox.textContent = 'Failed to load model. Check console.';
+                statusBox.className = "p-3 mb-4 rounded-lg text-center font-medium bg-red-100 text-red-700";
+            }
+        }
+
+        // Start loading the model when the page loads
+        window.addEventListener('load', loadModel);
+
+    </script>
+</body>
+
+</html>
+
