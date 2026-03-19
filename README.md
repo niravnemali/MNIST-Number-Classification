@@ -4,7 +4,7 @@ A handwritten digit recognition app built with a PyTorch DNN trained on MNIST, e
 
 ## Demo
 
-Open `index.html` in a browser, draw a digit (0–9) on the canvas, and the model predicts it in real time.
+Run in a browser through localHost, draw a digit (0–9) on the canvas, and the model predicts it in real time.
 
 ## Project Structure
 
@@ -53,12 +53,6 @@ pip install torch torchvision numpy matplotlib scikit-learn onnx
 2. The exported `my_mnist_model.onnx` is what `index.html` loads.
 
 ## How to Run the Demo
-
-No build step or server needed for basic use — just open the file:
-
-```
-index.html
-```
 
 > **Note:** Most browsers block local file loading due to CORS restrictions. If the model fails to load, serve the files with a local HTTP server:
 > ```bash
