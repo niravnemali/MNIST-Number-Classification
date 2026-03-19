@@ -1,6 +1,6 @@
 # MNIST Number Predictor
 
-A handwritten digit recognition app built with a PyTorch DNN trained on MNIST, exported to ONNX, and deployed as a browser-based drawing demo — no server required.
+A handwritten digit recognition app built with a PyTorch DNN trained on MNIST, exported to ONNX, and deployed as a browser-based drawing demo, no server required.
 
 ## Demo
 
